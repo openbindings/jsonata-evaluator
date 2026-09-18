@@ -114,9 +114,10 @@ design/api-loop/
   iteration-2/ ...
 ```
 
-Each iteration is one commit on a local branch `design/api-loop` in this
-repository: the stub changes, the records, nothing else. Not pushed. The
-branch is the audit trail; a wrong iteration is one revert.
+Each iteration is one commit on the branch `design/api-loop` in this
+repository: the stub changes, the records, nothing else, pushed to
+`origin` after the commit (see Landing). The branch is the audit trail; a
+wrong iteration is one revert.
 
 ## Cost
 
