@@ -186,3 +186,36 @@ So the loop's judgment can be checked before it runs.
 precedent is adequate); making `Object` an interface (no caller has asked);
 a compile cache in the library (the performance engineer's own argument
 against it is the stronger one).
+
+## Landing
+
+The loop exists to converge on one artifact and land it once. No work from
+the loop may outlive it as a branch.
+
+- **Integration ref:** `main`, as declared for this repository in
+  `openbindings/project/repositories.json` (the same ref as `jsonata`,
+  `openapi-client`, and `asyncapi-client`). The loop branches from `main`
+  and lands on `main`.
+- **One branch.** All iterations commit to `design/api-loop`. No per-iteration
+  branches, no per-ruling branches, no experiment branches. A rejected
+  direction is a revert on the same branch, recorded in that iteration's
+  `CHANGES.md`.
+- **Durability.** The branch is pushed to `origin` after every iteration's
+  commit so that a local mishap cannot lose an iteration. A pushed design
+  branch is not a release and creates no obligation; it is deleted on landing.
+- **Rulings do not become branches.** A ruling still open when the loop
+  stops is filed as a GitHub issue on this repository, referenced from
+  `RULINGS.md`, and the stub keeps its current answer. Issues hold deferred
+  decisions; branches never do.
+- **Landing gate.** The loop has stopped (converged, blocked, or capped);
+  `gofmt` and `go vet` are clean; every entry in `RULINGS.md` is either
+  resolved in the stub or filed as an issue; the `design/` records for every
+  iteration are committed.
+- **Landing.** One pull request from `design/api-loop` to `main`, squash-merged
+  with the branch deleted, per the project's PR workflow. The squash commit
+  message summarizes the iterations and links the issues. After landing, the
+  local branch is deleted and `main` is fast-forwarded, so the checkout has
+  exactly one branch again.
+- **Catalog.** The repository is declared in the project catalog before the
+  loop lands, so the landing has a declared destination. Cohort tier stays
+  `extended` until a member ships.
