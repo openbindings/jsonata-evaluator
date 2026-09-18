@@ -131,3 +131,39 @@ reference orders integer-like keys numerically before insertion order, so
 **Recommendation:** adopt 6a through 6d and 6f now; they make the stance
 coherent without changing its substance. Defer 6e until the profile has a
 consumer in the SDKs.
+
+## Additions from the iteration-1 panel (2026-09-18)
+
+**Ruling 4, regex dialect, escalated.** All five reviewers of iteration 1
+say an unstated dialect is the worst possible state: a practitioner cannot
+know whether `(?<=\$)\d+` compiles, and a security reviewer cannot know
+whether the engine is linear-time. Three of five (security, PL, integrator)
+endorse Go's `regexp` as a declared divergence with a stable compile-time
+code, the security reviewer noting it makes this member's regex story
+*stronger* than the reference's because RE2 is the safe engine. The
+practitioner wants the JavaScript dialect for portability of existing
+expressions. The stub still says nothing about the dialect. Recommendation
+unchanged: RE2, declared, with `CodeUnsupportedRegex` at Compile.
+
+**Ruling 6a evidence, `$round`.** The pinned documentation states
+ties-to-even and gives only non-tie examples (`$round(123.456, 2)`), so it
+is silent on whether the value rounded is the binary float64 or its shortest
+decimal. The reference shifts the decimal string, so `$round(2.675, 2)` is
+`2.68` there. Under "Go's arithmetic" the stub now says `2.67` and states
+why. This is the cleanest single example of what ruling 6a decides: the
+practitioner can predict the reference and cannot predict the host.
+
+**Ruling 6e evidence, the portable core.** The practitioner, for the second
+panel running, shows that `$keys` and `$string` are not portable over a
+`map[string]any` input (sorted here, document order in the reference,
+integer-like keys first in the reference), so the README's claim that the
+portable core yields identical results "without exception" is false unless
+the caller supplies ordered objects. Either narrow the claim or drop those
+two functions from the list.
+
+**Ruling 5, `Access` implementations.** Two reviewers (idiom, integrator)
+again ask for a shipped reflect-based struct Access following `encoding/json`
+tag rules, on the ground that a Go programmer's first call will be over a
+struct. Still frozen. Note that the iteration-2 `Access` redesign (one
+`Resolve` method plus optional view interfaces) makes such an implementation
+about a third the size it would have been.
