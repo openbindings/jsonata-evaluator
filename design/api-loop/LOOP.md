@@ -105,10 +105,12 @@ loop may not change. It is reported to the ruling queue as evidence.
 
 Four fixed lenses for comparability across iterations: Go idiom purist,
 application integrator, PL and specification skeptic, JSONata practitioner.
-One rotating lens for coverage: performance engineer (iteration 1), security
-and sandbox reviewer (2), technical writer reading only `go doc` output (3),
-the engineer who will write the JavaScript member from the same README (4),
-then performance again (5). Same rubric every time.
+One rotating lens for coverage. The panel that preceded the loop had a
+performance engineer; the panels that review iteration 1 onward rotate:
+security and sandbox reviewer (1), technical writer reading only `go doc`
+output (2), the engineer who will write the JavaScript member from the same
+README (3), performance engineer (4), then security again (5). Same rubric
+every time.
 
 ## Records and commits
 
