@@ -81,16 +81,25 @@ handling, and the value function. They are applied, and flagged in
 
 ## Stopping conditions
 
-The loop stops when any holds:
+The loop stops when **both** of the first two hold, or when either of the
+last two does:
 
-- **Converged:** two consecutive panels produce no Apply-bin findings (only
-  Rule-bin, Reject-bin, or previously applied items).
-- **Blocked:** the panel's top findings are all in the ruling queue, so
-  applying more is polishing around a decision not yet made.
+- **Converged on findings:** two consecutive panels produce no Apply-bin
+  findings (only Rule-bin, Reject-bin, or previously applied items).
+- **Converged on grades:** on every panel of those two, every reviewer grades
+  every row the loop controls at B+ or better, and the median across reviewers
+  on each of those rows is A- or better. The rows the loop controls are
+  idiomatic fit, ergonomics of the common path, correctness and footguns, and
+  performance headroom. Grades are a floor, never an average: an average hides
+  a C.
+- **Blocked:** findings have converged but grades have not, and the grades
+  that fall short cite items in the ruling queue. The loop has done what it
+  is allowed to do; the output is the ruling queue.
 - **Capped:** six iterations, or roughly 3M tokens across panels.
 
-Grades are recorded every iteration but are not a stopping condition. Panels
-surface arguments; convergence of *findings* is the signal, not the letter.
+The **concept soundness** row is recorded every iteration and is not a
+stopping condition, because it is graded against the class README, which the
+loop may not change. It is reported to the ruling queue as evidence.
 
 ## Panel composition
 
