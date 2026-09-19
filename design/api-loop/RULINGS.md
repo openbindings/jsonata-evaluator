@@ -448,3 +448,107 @@ The PL skeptic's grade is C+ in every panel and always for the same
 reason: the README's two-tier authority story does not survive its own
 ledger. Every other lens grades the concept B- or better and says the API
 is stronger than the README that introduces it.
+
+## Additions from the iteration-5 panel (2026-09-18)
+
+**Ruling 4, regex dialect: sixth panel; the security reviewer calls it the
+ReDoS decision.** A backtracking engine under a budget that charges one
+unit per call is catastrophic backtracking by construction
+(`$match($$.s, /^(a+)+$/)`); RE2 is linear but a large program over an
+uncharged subject was still unbounded, which iteration 6 fixed by charging
+subject length and program size. The reviewer also notes `$eval` hands the
+pattern to the payload author, so refusal must happen at `$eval` too. Both
+the practitioner and the PL skeptic now believe the documentation's
+regular-expression page names JavaScript syntax; if so the ledger's
+authority class is "incorporated", not "silent", and the ruling is forced
+toward declaring what RE2 cannot do as engine refusals rather than toward
+choosing a dialect. Verify the pinned page before ruling. Recommendation
+unchanged: Go's `regexp`, declared, unsupported constructs refused at
+Compile and at `$eval` with a stable S code.
+
+**Ruling 7, `Close`.** A third idiom reviewer argues for deletion ("if there
+is nothing behind it, do not ship it"); the security reviewer wants it kept
+and blocking, because the alternative is a fatal map race when a caller
+modifies its input while another goroutine's `Select` is still walking it.
+Iteration 6 made `Close` block. Recommendation unchanged: keep.
+
+**Ruling 8a, `$round`.** Two reviewers this panel (practitioner, pl) make
+the same new argument: `$string(2.675)` renders `"2.675"` here, so the
+package tells the user the value is 2.675 and then rounds it as if it were
+below; the number the package shows and the number it rounds should agree,
+and the shortest round-trip decimal is well-defined and host-independent.
+That is the strongest argument yet for the decimal basis, and it removes
+the ledger row. Recommendation revised: judge the tie on the shortest
+round-trip decimal, and pin that algorithm at class level under 6e.
+
+**Ruling 8b, refuse or round once.** The PL skeptic shows the doc's stated
+principle did not justify the refusal: `0.5` is an exact value, so "an
+operand is never converted inexactly" does not distinguish `9007199254740993
++ 0.5` (refused) from `9007199254740993 / 2` (rounded once to
+`4503599627370496`, which is then an exact integer). Iteration 6 states the
+two as two policies and names the reason for the refusal (an identifier
+losing digits on entering the decimal domain). Four reviewers across three
+panels now argue for one rule; none argues for the current pair as a
+principle, only as a policy. Recommendation unchanged (keep refusal), with
+the note that the alternative is now fully specified in the PL skeptic's
+report: compute exactly, keep integral results exact, round non-integral
+results once, reserve refusal for non-finite, division by zero, and
+`MaxIntegerBits`.
+
+**Ruling 9, the typed exit.** The integrator asks again for `Canonical`
+(every object `*Object`, every array `[]any`, every number
+`int64|float64|*big.Int`) and now also for `Project` (multi-select into an
+`*Object`). `Clone` was applied this iteration for a different reason
+(ownership) and is not a normalizer. Recommendation unchanged.
+
+**Ruling 10 (new): the decimal decode boundary.** The idiom reviewer argues
+that decoding `0.1000000000000000055511151231257827` to float64 at
+`Unmarshal` breaks README rule 4 (exact carriage) for decimals the way
+`encoding/json` breaks it for integers, and proposes carrying as
+`json.Number` any decimal token whose shortest float64 rendering does not
+reproduce it. The PL skeptic instead asks that the decode boundary be
+stated as the value function (which iteration 6 did). The two positions:
+representation-preserving decode (fidelity to the token; a per-read
+classification cost on rare values; `Marshal` re-emits the token) versus
+value-fixed decode (one number type for decimals; simpler laws; the token's
+extra digits are lost by definition). Recommendation: keep value-fixed
+decode; a decimal in this model is a float64, and the class's rule 4 is
+about values, not tokens.
+
+**Ruling 1 evidence.** Every reviewer this panel names the
+`map`/`*Object` split as the largest ergonomic cost; the idiom reviewer
+calls `Member` a bandage and the integrator counts roughly fifteen concrete
+result types. No new argument for either uniform choice.
+
+**Ruling 3 evidence.** The security reviewer wants the concurrent
+`Evaluation` kept (an `Evaluation` shared across goroutines is a real
+pattern in fan-out handlers) but with `Close` blocking; the performance
+engineer in iteration 4 wanted it dropped. The loop-controlled text now
+states both the waiting semantics and the budget caveat.
+
+**Ruling 5 evidence.** Fifth panel; the integrator's protobuf Resolver is
+again sixty lines with the `[]*pb.T`-is-foreign trap, and the reviewer
+adds the observation that no int64 presentation is right on both the
+expression side (`id + 1` needs an integer) and the JSON wire side
+(`protojson` quotes int64 because JSON consumers round), which is exactly
+why the project should ship the decision once.
+
+**Ruling 6, the class README: evidence and the post-loop task.** The PL
+skeptic (fifth panel, fifth C+) restates the authority ladder as 6n, shows
+rule 6 as written disallows roughly ten of the ledger's fifteen rows, and
+proposes the concrete rule-6 and rule-8 rewrites; the practitioner, idiom,
+and integrator reviewers each independently say the "portable core" must
+become a tested profile. The security reviewer notes the documentation
+defines no security-relevant behavior at all, so every such rule is an
+engine rule the class should own (6l). The first post-loop artifact both
+PL reviewers ask for is a class-level semantic core under `suite/`: the
+value domain, the value function, the three rounding boundaries, member
+order as representation, and the authority precedence, with the reference
+fixtures re-tagged (`documentation`, `reference-only`, `value-model`) and
+the laws as property tests.
+
+*Concept row across the loop.* Medians: B, B+, B, B+, B. The PL skeptic's
+C+ is constant and always for the README; the security reviewer grades the
+concept B+ and says host-native evaluation narrows the attack surface by
+removing the second parse and widens it by reading caller structures by
+reference, which iteration 6's depth and work charging addresses.

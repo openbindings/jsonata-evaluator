@@ -8,13 +8,18 @@ import (
 	"github.com/openbindings/jsonata-evaluator/go/jsonata"
 )
 
-// Compile once, evaluate many. The nil Limits means DefaultLimits.
+// Compile once, evaluate many. The package-level Compile runs under
+// DefaultLimits; a Limits value compiles under its own bounds.
 func ExampleCompile() {
-	expr, err := jsonata.Compile(`{ "id": user_id, "name": display_name }`, nil)
+	expr, err := jsonata.Compile(`{ "id": user_id, "name": display_name }`)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(expr.String())
+
+	tight := jsonata.Limits{MaxWork: 1 << 16, MaxBytes: 1 << 20}
+	_, err = tight.Compile(`$sum(items.price)`)
+	_ = err
 }
 
 // Unmarshal keeps every integer exact; encoding/json into any would round
@@ -29,7 +34,7 @@ func ExampleUnmarshal() {
 
 // The three outcomes: error, absent, present (a present nil is null).
 func ExampleExpression_Eval() {
-	expr := jsonata.MustCompile(`{ "id": user_id, "name": display_name }`, nil)
+	expr := jsonata.MustCompile(`{ "id": user_id, "name": display_name }`)
 	in, _ := jsonata.Unmarshal([]byte(`{"user_id": 9007199254740993, "display_name": "ada"}`))
 
 	out, present, err := expr.Eval(context.Background(), in, nil)
@@ -46,7 +51,7 @@ func ExampleExpression_Eval() {
 
 // Select one field without computing the others; Complete reuses it.
 func ExampleExpression_Prepare() {
-	expr := jsonata.MustCompile(`{ "id": user_id, "summary": $string($) }`, nil)
+	expr := jsonata.MustCompile(`{ "id": user_id, "summary": $string($) }`)
 	in, _ := jsonata.Unmarshal([]byte(`{"user_id": 1, "display_name": "ada"}`))
 
 	ev, err := expr.Prepare(context.Background(), in, nil)
@@ -79,7 +84,7 @@ func ExampleError() {
 // A language error carries its code, class, and position in the expression;
 // Error() never includes input content.
 func ExampleExpression_Eval_languageError() {
-	expr := jsonata.MustCompile(`"a" + 1`, nil)
+	expr := jsonata.MustCompile(`"a" + 1`)
 	_, _, err := expr.Eval(context.Background(), nil, nil)
 	var e *jsonata.Error
 	if errors.As(err, &e) && e.Code.Class() == jsonata.ClassType {
