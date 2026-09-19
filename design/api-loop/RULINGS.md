@@ -552,3 +552,117 @@ C+ is constant and always for the README; the security reviewer grades the
 concept B+ and says host-native evaluation narrows the attack surface by
 removing the second parse and widens it by reading caller structures by
 reference, which iteration 6's depth and work charging addresses.
+
+## Additions from the iteration-6 panel (2026-09-18), the loop's last
+
+**Ruling 8c, the integrality boundary: three positions.** Iteration 4
+capped integrality at 2^53 (an integral float64 above it was a decimal);
+iteration 5 removed the cap after the PL skeptic proved it broke
+substitutivity (`float64(9007199254740994) + 1` and the equal int64 gave
+different results). The iteration-6 panel attacks the removal from three
+seats. The PL skeptic: the value function is lexical (a `.` or `e` in the
+token decides the value) while the doc swears values are independent of
+provenance, and the result manufactures digits (`1e23 + 1` is
+`99999999999999991611393`; `1e300 * 1e300` is a 601-digit exact integer
+where the reference gives D1001); the proposal is to decode every numeric
+token by its mathematical value, so `1e23` and `9007199254740993.0` are
+the integers they spell. The practitioner: exponent spellings are
+magnitudes, not counts; restore the cap so a float64 at or beyond 2^53 is
+a decimal that renders as `JSON.stringify` does. The idiom reviewer: draw
+the boundary at 2^53, where `CodeInexact` already draws it. The three
+rules and the law each violates:
+
+- *Cap at 2^53* (iteration 4): violates substitutivity (equal values,
+  unequal results under `+ 1`).
+- *No cap, integral float64 is its integer* (current): honors
+  substitutivity; renders and computes binary artifacts as exact digits;
+  overrides `JSON.stringify` for values inside its domain.
+- *Decode by mathematical value* (pl, iteration 6): honors substitutivity
+  and rule 4 at the token boundary; makes `9007199254740993.0 =
+  9007199254740993` true; makes `1e23` a 24-digit exact integer, so
+  `Unmarshal` of a payload full of exponent-spelled magnitudes produces
+  `*big.Int` values, and `$string(1e300)` is 301 digits.
+
+Recommendation: the practitioner's cap, restated so it does not break
+substitutivity: an integral float64 of magnitude at most 2^53 is an
+integer; above it, a float64 is a decimal and an int64 or `*big.Int`
+compared with it is compared exactly but combined with it under the
+decimal rule. Substitutivity then holds because no int64 above 2^53 is
+equal to any float64 except an integral one, and that pair combines under
+the same rule from either side once the decimal rule is uniform (8b).
+
+**Ruling 8b.** The PL skeptic's grouping test: `(1e300 * 1e300) * 1.5` is
+E1008, `1e300 * (1e300 * 1.5)` is D1001, and `1e300 * 1e300 * 1e300`
+succeeds with a 900-digit integer: three outcomes for one product. The
+practitioner and PL skeptic both ask for one rule; the idiom reviewer keeps
+refusal in the keep list. Five reviewers across four panels for one rule;
+recommendation: round once, with refusal reserved for non-finite,
+division by zero, and `MaxIntegerBits`, unless Matt holds that the
+identifier-digit-loss case must refuse, in which case `/` must refuse too.
+
+**Ruling 8a.** The PL skeptic notes that under the package's own value
+function `2.675` is not a tie (it denotes 2.67499999...), so half-to-even
+has nothing to decide and the authority is the value model, not
+interpretation; the practitioner repeats the financial-rounding argument
+for the decimal spelling. Recommendation unchanged from iteration 5: judge
+the tie on the shortest round-trip digits and pin it at class level.
+
+**Ruling 4, regex dialect: sixth panel, all five reviewers.** The idiom
+reviewer: the README's own analogy settles it, a Go member uses
+`regexp/syntax` and refuses what it does not support, and leaving it
+pending while asserting the analogy is the one place the design is
+inconsistent with itself. The practitioner enumerates what would be refused
+and what differs silently (`\s`, case folding). Recommendation unchanged.
+
+**Ruling 6.** The PL skeptic's law audit (L1 through L16) is the most
+complete statement of what the README must say; the writer independently
+finds rule 6 forbids most of the ledger and the portable-core claim is
+false on the ledger's first row. Both PL reviewers and the writer ask for
+the value model as a language-neutral document under `suite/`. First
+post-loop task.
+
+**Ruling 1.** The idiom, integrator, and practitioner lenses each name the
+object split as the largest ergonomic cost, sixth panel running.
+
+**Ruling 2.** The integrator shows `Select(ctx, "id", "name")` reads as two
+fields and means the path `id.name`; the idiom reviewer asks for a required
+first key. Evidence for `Field` handles or for `Select(ctx, key)` plus
+`SelectPath`.
+
+**Ruling 3.** The idiom reviewer argues single-goroutine `Evaluation` from
+the stdlib's per-input handles (`sql.Rows`, `json.Decoder`) and notes that
+concurrent selections make `CodeBudget` unreproducible, which iteration 6
+had to admit in the doc. Recommendation unchanged: single-goroutine.
+
+**Ruling 7.** Third consecutive idiom reviewer for deleting `Close`; the
+iteration-6 blocking `Close` without a ctx is the new objection
+(`http.Server.Shutdown` takes one).
+
+**Ruling 9.** The integrator asks for `Canonical`, `SelectFields`, and
+32-bit rendering of a carried `float32`; the practitioner and integrator
+ask for a per-expression divergence report or lint.
+
+**Ruling 11 (new): decoder stance versus evaluator divergence.** The PL
+skeptic observes that duplicate-name and unpaired-surrogate refusal are
+policy, not malformation, and that the ledger itself calls them "a binding
+decision this member's decoder makes"; by the README's layering they
+belong to the binding. Options: keep them as `Unmarshal`'s declared stance
+under E1006; make them decoder options; move them to a separate code.
+Recommendation: keep the refusal, rename the ground in the ledger from
+"engine" to "decoder stance", and state in `Unmarshal` that a binding
+which needs last-wins decodes with `encoding/json` and `UseNumber`.
+
+**Ruling 12 (new): the absence triple.** The idiom lens proposed replacing
+`(value, present, err)` with an `Undefined` sentinel in three panels; the
+PL skeptic and practitioner defended the triple in two. The argument for
+the sentinel: the doc documents its own footgun (`v, _, err`), and a
+sentinel fails loudly (`Marshal(Undefined)` errors). The argument against:
+comma-ok is the map idiom, a sentinel `any` has no stdlib precedent, and
+`NoInput` already exists for the input side only. Recommendation: keep the
+triple.
+
+**Concept row, final.** Medians across the six panels: B, B+, B, B+, B, B.
+The PL skeptic graded C+ in every panel, always for the README; every
+other lens graded B- or better and said the API is stronger than the README
+that introduces it. The loop's evidence for ruling 6 is that this finding
+was reached independently by eleven reviewers of four lenses.
