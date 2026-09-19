@@ -7,8 +7,10 @@
 // engine. Integers are exact up to Limits.MaxIntegerBits, decimals are
 // float64, and an operand is never converted inexactly: a value that cannot
 // be represented exactly is an error, never an approximation. No expression,
-// whatever its content, can terminate the process. The design is written up
-// at https://github.com/openbindings/jsonata-evaluator.
+// whatever its content, can panic the calling goroutine or allocate without
+// bound; a caller's own concurrent mutation and a panic inside a caller's
+// Resolver are outside that promise. The design is written up at
+// https://github.com/openbindings/jsonata-evaluator.
 //
 // Status: design. Every function in this package is a signature and a doc
 // comment; none is implemented.
@@ -42,23 +44,29 @@
 // (so []any, map[string]any, []string, map[string]int64, and so on), and any
 // named type whose underlying type is one of those. Classification is by
 // exact type first: []byte, which is []uint8, is bytes and never an array of
-// numbers; json.RawMessage is decoded as JSON on first read; any other named
-// type whose underlying type is []byte is bytes. A nil []byte is the empty
-// bytes. A nil []T is the empty array and a nil map[string]T is the empty
-// object, because Go code routinely leaves a collection unset and
-// $count(items) = 0 should hold for it rather than items being null; every
-// nil pointer, including a nil *Object and a nil *big.Int, is null. A string
-// that is not valid UTF-8 is an error (CodeUnsupportedValue). A view is read
-// through its methods wherever it appears: as the input, in a binding, or
-// from a Resolver.
+// numbers; a json.RawMessage is decoded as JSON on each read, charged per
+// byte to MaxWork (a caller that reads one more than once decodes it with
+// Unmarshal first), and a nil or empty one is malformed (CodeMalformedInput);
+// any other named type whose underlying type is []byte is bytes. A nil
+// []byte is the empty bytes. A nil []T is the empty array and a nil
+// map[string]T is the empty object, because Go code routinely leaves a
+// collection unset and $count(items) = 0 should hold for it rather than
+// items being null; every nil pointer, including a nil *Object and a nil
+// *big.Int, is null. A string that is not valid UTF-8 is an error
+// (CodeUnsupportedValue). A view is read through its methods wherever it
+// appears: as the input, in a binding, or from a Resolver; a view is never
+// passed to a Resolver.
 //
 // Anything else is foreign. The expression can read a foreign value only
 // through the Resolver in Env; without one it is an error
 // (CodeUnsupportedValue). A foreign value nested inside an admitted
 // container, or bound in Env.Bindings, is resolved when read like any other.
 // Admission is per value, on first read: a value the expression never reads
-// is never checked, and Prepare checks nothing but the root. Values are read
-// by reference and never copied on admission.
+// is never checked, and Prepare checks nothing but the root. Carriage is not
+// a read: a value the expression only selects, copies, or rearranges is
+// neither classified nor validated, so an invalid string or a foreign value
+// can pass through unread; only an operation that observes a value's content
+// classifies it. Values are read by reference and never copied on admission.
 //
 // NoInput is the input for evaluating with no input at all: $ is then
 // absent (undefined), as the reference implementation's evaluate() with no
@@ -75,14 +83,17 @@
 // A value the expression only selects, copies, or rearranges is carried: it
 // is returned as the same Go value, same type, same identity. Only carriage
 // preserves a value's representation. So $ over a map[string]any input
-// returns that map, while { "a": $.a } returns a new *Object. A caller that
-// must handle "an object" uses Member, which reads either, writes a two-arm
-// switch over map[string]any and *Object, or encodes the result with
-// Marshal, which handles both. A foreign value that was carried is returned
-// as the original foreign value, never as the view the Resolver produced;
-// Materialize converts a result that still contains foreign values. A result
-// that is a function value cannot leave an evaluation and is an error
-// (CodeUnsupportedValue).
+// returns that map, while { "a": $.a } returns a new *Object. A sequence
+// result is a []any and a singleton is the value itself. The transform
+// operator's copy is a new tree of *Object and []any whose scalars are
+// carried. A caller that must handle "an object" uses Member, which reads
+// either, writes a two-arm switch over map[string]any and *Object, or
+// encodes the result with Marshal, which handles both; Int64 and Float64
+// recover a number from any admitted representation. A foreign value that
+// was carried is returned as the original foreign value, never as the view
+// the Resolver produced; Materialize converts a result that still contains
+// foreign values. A result that is or contains a function value cannot
+// leave an evaluation and is an error (CodeUnsupportedValue).
 //
 // # Errors
 //
@@ -101,9 +112,8 @@
 //
 // Every admitted numeric representation denotes one numeric value, and every
 // operation that observes a number (arithmetic, comparison, ordering,
-// membership, sort keys, $type, $string, object keys) is a function of that
-// value, never of the representation. Only carriage preserves the
-// representation.
+// membership, sort keys, $type, $string) is a function of that value, never
+// of the representation. Only carriage preserves the representation.
 //
 // Admission widens without loss: int through int64 and uint through uint32
 // are int64; uint and uint64 are int64 when they fit and *big.Int otherwise;
@@ -111,19 +121,24 @@
 // json.Number is classified each time it is read (it is a string and holds
 // no cache): an integral token within int64 is int64, an integral token
 // beyond int64 is *big.Int, a token with a fraction or exponent is the
-// nearest float64 (that float64 is what a decimal is in this model, not a
-// rounding of a result), a token whose nearest float64 is not finite is an
-// error (D1001), and a token that is not a JSON number is an error
+// nearest float64, a token whose nearest float64 is not finite is an error
+// (D1001), and a token that is not a JSON number is an error
 // (CodeUnsupportedValue). Unmarshal decodes straight to int64, *big.Int, and
 // float64 so that decoded input pays no such cost. A numeric literal in an
 // expression follows the same rule: 1 and 9007199254740993 are int64,
-// 18446744073709551616 is *big.Int, and 1.0, 1e2, and 0.5 are float64.
+// 18446744073709551616 is *big.Int, and 1.0, 1e2, and 0.5 are float64. A
+// decimal token becomes its nearest float64 when it is decoded or first
+// read, and that is where a decimal's precision is fixed, so
+// 9007199254740993.0 = 9007199254740993 is false: the left side is the
+// float64 9007199254740992.
 //
-// A value is an integer when it is integral, whatever its representation: a
-// float64 whose value is integral and of magnitude at most 2^53 takes part in
-// arithmetic and comparison as that integer, so x / 100.0 is x / 100 and
-// json.Number("1.0") + 9007199254740993 is exact. A float64 that is not
-// integral, or is integral beyond 2^53, is a decimal.
+// A value is an integer when it is integral, whatever its representation:
+// a float64 whose value is integral takes part in arithmetic and comparison
+// as that integer (every integral float64 is exactly some integer, and none
+// exceeds MaxIntegerBits), so x / 100.0 is x / 100, json.Number("1.0") +
+// 9007199254740993 is exact, and 1e23 + 1 is the exact integer
+// 99999999999999991611393, because the float64 spelled 1e23 is that integer.
+// A float64 that is not integral is a decimal.
 //
 // Results are int64, float64, or *big.Int. Integer with integer yields an
 // exact integer, int64 when the result fits and *big.Int otherwise, so the
@@ -131,52 +146,57 @@
 // *big.Int result whose bit length exceeds Limits.MaxIntegerBits is an error
 // (CodeBudget). An integer operand combined with a decimal operand must
 // convert to float64 exactly, and is an error (CodeInexact) otherwise, so
-// 9007199254740993 + 0.5 fails while 0.1 + 0.2 yields the float64 sum. "/"
-// over two integers yields the exact integer when the division is exact and
-// otherwise the exact quotient rounded once to float64, so
-// 1758000000000000123 / 1000000 yields 1758000000000.0001 rather than
-// failing. The principle is that an operand is never converted inexactly,
-// while a non-integral result of exact operands is rounded once, because the
-// language defines division to yield fractions and float64 is what a
-// fraction is in this model. "%" is Go's % for integers and math.Mod for
-// floats. Division or remainder by zero and a non-finite result are errors
-// (D1001). $sum, $abs, $floor, $ceil, $round at precision 0, and $power with
-// a non-negative integer exponent stay in the integer domain; $sqrt,
-// $average, and $power otherwise yield float64. $sum adds left to right.
-// $sqrt is correctly rounded; $power with a non-integer exponent is math.Pow
-// and may differ from another host's in the last unit.
+// 9007199254740993 + 0.5 fails while 0.1 + 0.2 yields the float64 sum, and
+// x / 1e9 succeeds where x * 1e-9 fails for an x beyond 2^53 (1e9 is
+// integral; 1e-9 is a decimal). "/" over two integers yields the exact
+// integer when the division is exact and otherwise the exact quotient
+// rounded once to float64, so 1758000000000000123 / 1000000 yields
+// 1758000000000.0002 rather than failing. The principle is that an operand
+// is never converted inexactly, while a non-integral result of exact
+// operands is rounded once, because the language defines division to yield
+// fractions and float64 is what a fraction is in this model. "%" is Go's %
+// for integers and math.Mod for floats. Division or remainder by zero and a
+// non-finite result are errors (D1001). $sum, $abs, $floor, $ceil, $round at
+// precision 0, and $power with a non-negative integer exponent stay in the
+// integer domain; $sqrt, $average, and $power otherwise yield float64. $sum
+// adds left to right. $sqrt is correctly rounded; $power with a non-integer
+// exponent is math.Pow and may differ from another host's in the last unit.
 //
 // $round rounds half to even on the binary float64 value, so $round(2.675,
 // 2) is 2.67 (2.675 as a float64 is below the midpoint); the reference
-// implementation rounds the decimal spelling and yields 2.68, a declared
-// divergence. $string renders an integer as its decimal digits and a float64
-// as JSON.stringify does, which the documentation specifies: the shortest
-// digits that round-trip, plain notation for magnitudes from 1e-6 up to but
-// excluding 1e21 and exponent notation with an unpadded exponent otherwise,
-// -0 as 0. So $string(1e6) is "1000000", $string(1e21) is "1e+21", and
-// $string(1e-7) is "1e-7"; encoding/json renders float64 the same way, and
-// strconv's 'g' format does not. The reference implementation renders floats
-// to 15 significant digits, so $string(0.1 + 0.2) is "0.3" there and
-// "0.30000000000000004" here, a declared divergence.
+// implementation rounds the decimal spelling and yields 2.68 (see
+// DIVERGENCES.md). $string renders an integer, including an integral
+// float64, as its decimal digits, and a decimal as JSON.stringify does,
+// which the documentation specifies: the shortest digits that round-trip,
+// plain notation for magnitudes of 1e-6 and above and exponent notation with
+// an unpadded exponent below, -0 as 0. So $string(1e6) is "1000000",
+// $string(0.1 + 0.2) is "0.30000000000000004", and $string(1e-7) is "1e-7".
+// The reference implementation renders floats to 15 significant digits, so
+// $string(0.1 + 0.2) is "0.3" there, and renders an integral float64 of 1e21
+// or more in exponent notation, so $string(1e21) is "1e+21" there and
+// "1000000000000000000000" here (see DIVERGENCES.md).
 //
 // Equality, ordering, and membership across representations are by value:
 // int64(1), float64(1), json.Number("1"), and json.Number("1.0") are equal
 // and sort together, and comparison never rounds through float64 when both
 // operands are exact; an exact integer compared with a decimal is compared
-// exactly, so 9007199254740993 > 9007199254740992.0.
+// exactly, so 9007199254740993 > 9007199254740992.5.
 //
 // # Strings, bytes, and regular expressions
 //
 // A string's characters are Unicode code points, so $length("😀") is 1,
 // $substring indexes code points, and $match reports index in code points.
 // Ordering of strings is by code point; the reference implementation orders
-// by UTF-16 code unit, a declared divergence. Case mapping is full Unicode
+// by UTF-16 code unit (see DIVERGENCES.md). Case mapping is full Unicode
 // case mapping, so $uppercase("straße") is "STRASSE". $sort is stable.
-// $replace follows the documentation: in a string replacement $N is the Nth
-// captured group, $$ is a literal dollar, and a group number beyond the
-// groups captured is the empty string; Go's ${name} form is not recognized.
-// Regex literals are compiled by Compile, so a malformed literal fails there
-// rather than at evaluation.
+// $replace follows the documentation and the reference: in a string
+// replacement $0 is the whole match, $N is the Nth captured group, and $$ is
+// a literal dollar; digits naming more groups than exist are read as the
+// longest prefix that names a group followed by the remaining digits
+// literally, so $12 with one group is group 1 followed by "2", and a group
+// number with no such prefix is the empty string. Go's ${name} form is not
+// recognized. Regex literals are compiled by Compile, so a malformed literal
+// fails there rather than at evaluation.
 //
 // A []byte is a string for every purpose that observes its content: $type,
 // $length, $contains, every string function, equality, and ordering. That
@@ -200,14 +220,16 @@
 // A map[string]any has no member order, so every operation that observes
 // member order ($keys, $each, $spread, $string, $merge, $sift, object
 // construction, the transform operator) sees a map's keys in sorted byte
-// order, which is code point order for valid UTF-8. An *Object preserves
+// order, which is code point order for valid UTF-8, at the cost of a sort
+// per observation; an *Object avoids the sort. An *Object preserves
 // insertion order; Unmarshal produces *Object so that decoded JSON keeps
 // document order, and a caller who needs insertion order on other input
 // supplies an *Object. An ObjectView's Range order is its order for every
 // such operation. The reference implementation orders integer-like keys
 // numerically before all others, a JavaScript artifact this package does not
-// reproduce; declared. Two objects are equal when they have the same members
-// with equal values, regardless of member order or of map versus *Object.
+// reproduce (see DIVERGENCES.md). Two objects are equal when they have the
+// same members with equal values, regardless of member order or of map
+// versus *Object.
 //
 // # Ownership and concurrency
 //
@@ -231,14 +253,16 @@
 // available when the result is an object constructor with distinct literal
 // keys, or a block whose final expression is one, and the selected field's
 // subexpression is pure. In a block, the statements before the final
-// expression (the prelude) are evaluated once before the first selection,
-// their bindings are shared by every selection, and a failure among them
-// fails every selection; this is the way to guard a transform under
-// selection. A failure in one field's subexpression does not fail another
-// field's, so $error or $assert in a sibling field is not a guard under
-// selection. When Complete would succeed, Select returns the same field.
-// Evaluation.Plan reports whether selection applies and, when it does not,
-// why.
+// expression (the prelude) are evaluated once, on the first selection rather
+// than in Prepare, their bindings are shared by every selection, and a
+// failure among them is reported by every selection; this is the way to
+// guard a transform under selection. A failure in one field's subexpression
+// does not fail another field's, so $error or $assert in a sibling field is
+// not a guard under selection, and Complete fails when any field would.
+// When Complete would succeed, Select returns the same field. The plan is
+// fixed at Compile except ReasonArrayInput, which Prepare determines from
+// the root; Expression.Fields reports the static part and Evaluation.Plan
+// the whole.
 //
 //	ev, err := expr.Prepare(ctx, in, nil)
 //	if err != nil { ... }
@@ -246,49 +270,58 @@
 //	id, present, err := ev.Select(ctx, "id")      // only the "id" field runs
 //	all, present, err := ev.Complete(ctx)         // reuses "id", computes the rest
 //
-// Eval fixes the timestamp that $now and $millis observe at its start, and
-// Prepare fixes it for the life of the Evaluation, so those functions are
+// After a budget error (CodeBudget) every later call on the Evaluation fails
+// the same way, and after an engine defect (CodeInternal) the Evaluation is
+// closed; a language error in one field leaves the others selectable.
+//
+// The timestamp that $now and $millis observe is fixed before its first
+// observation and at most once per Eval or Prepare, so those functions are
 // pure for selection and cannot time other work; $random and $eval are
-// opaque to the planner. Env.Now overrides the clock, for tests.
+// opaque to the planner. Env.Now overrides the clock, for tests, and is not
+// called when the expression cannot observe the clock.
 //
 // # Bounds and cancellation
 //
 // Every bound in Limits has a finite default, the bounds are part of the
 // compiled expression so they apply wherever it is evaluated, and exceeding
 // one is an error (CodeBudget) raised before the allocation that would
-// exceed it. One Eval, or one Evaluation across all of its selections and
-// Complete, has one budget, and $eval compiles and evaluates within it. The
-// bounds count work and bytes, not time: cancellation and deadlines come
-// from ctx and are checked between operations and, within operations whose
-// cost scales with input size, at intervals. Compile takes no ctx; it is
-// bounded by MaxExpressionBytes and MaxDepth. A panic inside the engine is a
-// defect and is recovered into an Error (CodeInternal) so the process
-// survives it; a panic inside a caller's Resolver or BytesEncoding
-// propagates to the caller.
+// exceed it (for a buffer that grows, before each growth). One Eval, or one
+// Evaluation across all of its selections and Complete, has one budget, and
+// $eval compiles and evaluates within it. The bounds count work and bytes,
+// not time: cancellation and deadlines come from ctx and are checked at
+// intervals bounded by MaxWork units, and within operations whose cost
+// scales with input size. Compile takes no ctx; it is bounded by
+// MaxExpressionBytes and MaxDepth. A panic inside the engine is a defect and
+// is recovered into an Error (CodeInternal) so the process survives it; a
+// panic inside a caller's Resolver or BytesEncoding propagates to the
+// caller.
 //
 // # Environment
 //
-// The evaluation environment is closed except for the clock (which Eval and
-// Prepare fix), $random (math/rand/v2, not cryptographic), and the Resolver
+// The evaluation environment is closed except for the clock, $random
+// (math/rand/v2, not cryptographic, and not for tokens), and the Resolver
 // and BytesEncoding the caller supplies in Env; see Resolver for what that
 // door means. This package offers no way to register functions, and
 // Env.Bindings holds values only. A binding shadows a built-in of the same
 // name, as in the reference implementation, so binding "string" makes
-// $string a value and $string(x) a T1006. $eval is available as the
-// documentation defines it, sees the bindings and the enclosing scope, and
-// its result is carried like any other. Tail calls are eliminated as the
-// documentation describes and do not count against MaxRecursion. $now,
-// $fromMillis, and $toMillis use UTC unless the documented timezone argument
-// (±HHMM) or the parsed text supplies an offset; the host's local zone is
-// never consulted.
+// $string a value and $string(x) a T1006. A binding whose value is nil is
+// null, not absent; there is no way to bind an absent variable, and ?? falls
+// through on absent only, so $x ?? "d" with $x bound to nil is null. $eval is
+// available as the documentation defines it, sees the bindings and the
+// enclosing scope, and its result is carried like any other. Tail calls are
+// eliminated as the documentation describes and do not count against
+// MaxRecursion. $now, $fromMillis, and $toMillis use UTC unless the
+// documented timezone argument (±HHMM) or the parsed text supplies an
+// offset; the host's local zone is never consulted.
 //
 // # Conformance
 //
 // This package implements JSONata Version as defined by the documentation at
 // https://github.com/jsonata-js/jsonata/tree/5d1473277e0022d8580e00f891b12080eb3edd74/website/versioned_docs
 // (DocumentationCommit). Where its behavior departs from the reference
-// implementation's observable behavior, the departure is recorded with its
-// reason in DIVERGENCES.md beside this package.
+// implementation's test suite, or from any other reference behavior this
+// package has found, the departure is recorded with its reason in
+// DIVERGENCES.md beside this package.
 package jsonata
 
 import (
@@ -308,7 +341,8 @@ const (
 )
 
 // NoInput is the input for evaluating with no input: $ is absent. It is
-// meaningful only as the root input; nested anywhere it is foreign.
+// meaningful only as the root input; nested anywhere, including in a
+// binding, it is foreign.
 var NoInput any = noInput{}
 
 type noInput struct{}
@@ -317,13 +351,16 @@ type noInput struct{}
 // default for that field; a nil *Limits means all defaults. Limits are part
 // of the compiled Expression and are read back with Expression.Limits, so a
 // cache of compiled expressions can key on them; Limits is comparable and
-// will stay so. A carried value counts as one node however large it is, and
-// its bytes are not charged.
+// will stay so, and a cache keys on Expression.Limits, which has the
+// defaults filled in, rather than on the value passed to Compile. A carried
+// value counts as one node however large it is, and its bytes are not
+// charged.
 type Limits struct {
 	// MaxExpressionBytes bounds the length of an expression in UTF-8 bytes,
 	// applied separately to each source passed to $eval. Default 256 KiB.
 	MaxExpressionBytes int
-	// MaxDepth bounds the nesting depth of a parsed expression. Default 128.
+	// MaxDepth bounds the nesting depth of a parsed expression, and of a
+	// JSON text Unmarshal decodes. Default 128.
 	MaxDepth int
 	// MaxRecursion bounds evaluation depth, including function recursion and
 	// $eval; tail calls do not count. Default 1024.
@@ -332,17 +369,18 @@ type Limits struct {
 	// value and each carried value once. Default 1 << 20.
 	MaxOutputNodes int
 	// MaxWork bounds the work of one evaluation: nodes evaluated, elements
-	// materialized, source bytes parsed (including by $eval), calls into the
-	// Resolver and BytesEncoding, comparisons in a sort, and values visited
-	// by a descendant operator, including intermediates that never reach the
-	// result. Default 8 << 20.
+	// materialized, source bytes parsed (including by $eval), bytes of a
+	// json.RawMessage decoded, calls into the Resolver and BytesEncoding,
+	// comparisons in a sort, and values visited by a descendant operator,
+	// including intermediates that never reach the result. Default 8 << 20.
 	MaxWork int
 	// MaxBytes bounds the bytes allocated by one evaluation for strings,
-	// []byte, encoded forms, *big.Int, $eval sources, regex programs, and
-	// Error values, including intermediates and values a Resolver returns.
-	// Default 64 MiB.
+	// []byte, encoded forms, *big.Int, $eval sources, regex programs, Error
+	// values, and strings and []byte the engine observes through a view,
+	// including intermediates. Default 64 MiB.
 	MaxBytes int
-	// MaxIntegerBits bounds the magnitude of a *big.Int result. Default 4096.
+	// MaxIntegerBits bounds the magnitude of a *big.Int result. Every
+	// integral float64 is within any value at or above 1024. Default 4096.
 	MaxIntegerBits int
 }
 
@@ -355,11 +393,11 @@ func DefaultLimits() Limits { panic("unimplemented") }
 // BytesEncoding, and the real clock. An Env is read-only during evaluation
 // and may be shared by any number of concurrent evaluations.
 type Env struct {
-	// Bindings supplies variables. Names omit the leading "$" and may not
-	// begin with one; a name that does is an error (CodeBinding) from
-	// Prepare, or from Eval when Eval is called directly. Values only; a
-	// function cannot be bound. The map is borrowed, not copied, and its
-	// values may appear in results by identity.
+	// Bindings supplies variables. Names are what the language accepts
+	// after "$", without the "$"; a name beginning with "$" is an error
+	// (CodeBinding) from Prepare, or from Eval when Eval is called directly.
+	// Values only; a function cannot be bound. The map is borrowed, not
+	// copied, and its values may appear in results by identity.
 	Bindings map[string]any
 	// Resolver reads values outside the admitted set. Nil means none.
 	Resolver Resolver
@@ -369,7 +407,8 @@ type Env struct {
 	// base64.StdEncoding and URLEncoding, satisfy the interface unchanged.
 	BytesEncoding BytesEncoding
 	// Now supplies the timestamp $now and $millis observe. Nil means
-	// time.Now. It is called once per Eval or Prepare; the instant it
+	// time.Now. It is called at most once per Eval or Prepare, and not at
+	// all when the expression cannot observe the clock; the instant it
 	// returns is rendered in UTC whatever its location.
 	Now func() time.Time
 }
@@ -378,12 +417,12 @@ type Env struct {
 // DefaultLimits. The returned Expression is immutable and safe for
 // concurrent use; callers evaluating many inputs against one expression
 // compile it once. Caching compiled expressions is the caller's concern; a
-// cache keyed by the source and the Limits is sufficient. A failure is an
-// *Error of ClassSyntax with its position.
+// cache keyed by the source and Expression.Limits is sufficient. A failure
+// is an *Error of ClassSyntax with its position.
 func Compile(expression string, limits *Limits) (*Expression, error) { panic("unimplemented") }
 
-// MustCompile is Compile for an expression fixed at build time. It panics on
-// error, as regexp.MustCompile does.
+// MustCompile is Compile for an expression fixed at build time; nil limits
+// means DefaultLimits. It panics on error, as regexp.MustCompile does.
 func MustCompile(expression string, limits *Limits) *Expression { panic("unimplemented") }
 
 // Eval compiles expression under DefaultLimits and evaluates it once; env
@@ -393,22 +432,27 @@ func Eval(ctx context.Context, expression string, input any, env *Env) (value an
 	panic("unimplemented")
 }
 
-// Unmarshal decodes JSON text into admitted values: integral numbers as
-// int64 or *big.Int, other numbers as float64, strings as string, objects as
-// *Object in member order, arrays as []any. Surrounding whitespace is
-// allowed and a top-level scalar is a complete value. A text that is not one
-// complete JSON value, contains a duplicate member name within an object, or
-// contains an escape for an unpaired surrogate is an error
-// (CodeMalformedInput) whose Offset is into data.
+// Unmarshal decodes JSON text into admitted values: integer tokens as int64
+// or *big.Int, tokens with a fraction or exponent as float64, strings as
+// string, objects as *Object in member order, arrays as []any. Surrounding
+// whitespace is allowed and a top-level scalar is a complete value. A text
+// that is not one complete JSON value, contains a duplicate member name
+// within an object, or contains an escape for an unpaired surrogate is an
+// error (CodeMalformedInput) whose Offset is into data. Nesting is bounded
+// by DefaultLimits().MaxDepth and the decoded size by MaxBytes (CodeBudget);
+// EvalJSON decodes under its expression's Limits instead. Unmarshal copies
+// data once; strings in the result may share that copy, so a small string
+// can keep the whole decoded text alive.
 func Unmarshal(data []byte) (any, error) { panic("unimplemented") }
 
-// Marshal encodes a result as JSON text: *Object in member order, a map in
-// sorted key order, json.Number as its token, *big.Int as digits, float64 as
-// $string renders it, a float32 as its float64 widening, []byte through
-// env's BytesEncoding, no HTML escaping, and U+2028 and U+2029 unescaped.
-// A foreign value in v, or a []byte when env has no BytesEncoding, is an
-// error (CodeUnsupportedValue); Materialize resolves foreign values first.
-// env may be nil.
+// Marshal encodes a result as JSON text with no trailing newline: *Object
+// in member order, a map in sorted key order, json.Number as its token,
+// *big.Int as digits, float64 as $string renders it, a float32 as its
+// float64 widening (so a carried float32(0.1) is 0.10000000149011612, as
+// $string also renders it), []byte through env's BytesEncoding, no HTML
+// escaping, and U+2028 and U+2029 unescaped. A foreign value in v, or a
+// []byte when env has no BytesEncoding, is an error (CodeUnsupportedValue);
+// Materialize resolves foreign values first. env may be nil.
 func Marshal(v any, env *Env) ([]byte, error) { panic("unimplemented") }
 
 // NewEncoder returns an Encoder that writes results to w as Marshal would.
@@ -437,9 +481,21 @@ func Materialize(ctx context.Context, v any, env *Env, limits *Limits) (any, err
 }
 
 // Member returns the member named key of an object result, whether it is a
-// map[string]any, an *Object, or a map[string]T of admitted T. ok is false
-// when v is not an object or has no such member.
+// map[string]any, an *Object, or a map[string]T of admitted T (the first two
+// by a type switch, the last by reflection). ok is false when v is not an
+// object or has no such member.
 func Member(v any, key string) (value any, ok bool) { panic("unimplemented") }
+
+// Int64 returns v's value when v is an admitted number whose value is an
+// integer that fits in int64: any integer type, a *big.Int in range, an
+// integral float64 in range, or a json.Number whose value is such an
+// integer. ok is false otherwise; a decimal is never truncated.
+func Int64(v any) (n int64, ok bool) { panic("unimplemented") }
+
+// Float64 returns v's value when v is an admitted number that converts to
+// float64 exactly, by the rule arithmetic applies to operands. ok is false
+// otherwise; an integer is never rounded.
+func Float64(v any) (f float64, ok bool) { panic("unimplemented") }
 
 // Expression is a compiled JSONata expression.
 type Expression struct{ _ struct{} }
@@ -454,32 +510,46 @@ func (e *Expression) Limits() Limits { panic("unimplemented") }
 
 // Reads reports the input members the expression reads when that is
 // statically known. Each path is a sequence of member keys from the root; a
-// key applies to every element when the value at that point is an array.
-// When known is true the list is sound: the expression reads nothing outside
-// it, so a caller may fetch only those members. Any use of $$ inside a
-// function, a wildcard, a descendant or parent operator, $lookup with a
-// computed key, $keys, $each, $spread, $eval, or a reference to a name that
-// is not bound in the expression itself (an Env binding) makes known false,
-// and paths is then nil. The returned slices are fresh.
+// key applies to every element when the value at that point is an array,
+// and a path read inside a predicate is included, so items[price > 10].name
+// reads items.price and items.name. When known is true the list is sound:
+// the expression reads nothing outside it, so a caller may fetch only those
+// members; an expression that reads no member reports an empty, non-nil
+// list. Any use of $$ inside a function, a wildcard, a descendant or parent
+// operator, $lookup with a computed key, $keys, $each, $spread, or $eval
+// makes known false, and paths is then nil. A binding read is not an input
+// read and does not affect known. The returned slices are fresh.
 func (e *Expression) Reads() (paths [][]string, known bool) { panic("unimplemented") }
 
-// Eval evaluates the whole expression over input; env may be nil.
+// Fields reports the static part of the plan: the selectable top-level
+// keys, in constructor order, when the result is an object constructor
+// with distinct literal keys (or a block ending in one) whose fields are
+// all pure. ok is false otherwise. Prepare may still report
+// ReasonArrayInput for an array root. A caller validating configured
+// selections checks them here, before any input exists.
+func (e *Expression) Fields() (keys []string, ok bool) { panic("unimplemented") }
+
+// Eval evaluates the whole expression over input; env may be nil. A result
+// that carries a foreign value returns it as the original value; Marshal
+// refuses such a result, so a caller with a Resolver materializes first or
+// uses EvalJSON.
 func (e *Expression) Eval(ctx context.Context, input any, env *Env) (value any, present bool, err error) {
 	panic("unimplemented")
 }
 
-// EvalJSON is Eval over Unmarshal(input), then Materialize through env, then
-// Marshal; env may be nil. An absent result is out == nil, present == false,
-// and a nil error.
+// EvalJSON is Eval over Unmarshal(input), followed by one pass that resolves
+// foreign values through env and encodes as Marshal would, all under the
+// expression's Limits; env may be nil. An absent result is out == nil,
+// present == false, and a nil error.
 func (e *Expression) EvalJSON(ctx context.Context, input []byte, env *Env) (out []byte, present bool, err error) {
 	panic("unimplemented")
 }
 
-// Prepare borrows input and env, fixes the timestamp $now and $millis
-// observe, classifies the root (through the Resolver when it is foreign,
-// charged to the budget), and plans selective evaluation without evaluating
-// anything else; env may be nil. It fails for an invalid Env, for a root
-// the Resolver rejects, and for ctx. Close the Evaluation when done.
+// Prepare borrows input and env, classifies the root (through the Resolver
+// when it is foreign, charged to the budget), and completes the plan; it
+// evaluates nothing else, not even a prelude. env may be nil. It fails for
+// an invalid Env, for a root the Resolver rejects, and for ctx. Close the
+// Evaluation when done.
 func (e *Expression) Prepare(ctx context.Context, input any, env *Env) (*Evaluation, error) {
 	panic("unimplemented")
 }
@@ -490,7 +560,10 @@ func (e *Expression) Prepare(ctx context.Context, input any, env *Env) (*Evaluat
 // later Complete reuses every field already selected and returns the same
 // values by identity. All selections and Complete draw on one budget. An
 // Evaluation is safe for concurrent use: a Select of a field another
-// goroutine is computing waits for it.
+// goroutine is computing waits for it, and a waiter whose ctx ends returns
+// ctx.Err() while the computation continues for the goroutine that started
+// it. Under concurrent selections the budget may be exhausted at a different
+// point than under the same selections made in sequence.
 type Evaluation struct{ _ struct{} }
 
 // Select returns the field of the result at path, where each element is a
@@ -498,11 +571,14 @@ type Evaluation struct{ _ struct{} }
 // permits, only that field's subexpression is evaluated; otherwise the whole
 // expression is evaluated once and the field is looked up. A path that
 // descends below constructor granularity is a lookup by member key within
-// the deepest selected field; descending into an array yields absent. An
-// empty path is Complete. A key not among the constructor's keys is absent.
-// An object constructor with duplicate literal keys fails as Complete would
-// (D1009). Select is not a guard; a caller for whom the transform's failure
-// is meaningful uses Complete or Eval.
+// the deepest selected field, through a view or the Resolver when the field
+// carried a foreign value, charged as work; descending into an array yields
+// absent. An empty path is Complete. A key not among the constructor's keys
+// is absent, as a field whose subexpression yields no value is;
+// Expression.Fields distinguishes the two before evaluation. An object
+// constructor with duplicate literal keys fails as Complete would (D1009).
+// Select is not a guard; a caller for whom the transform's failure is
+// meaningful uses Complete or Eval.
 func (v *Evaluation) Select(ctx context.Context, path ...string) (value any, present bool, err error) {
 	panic("unimplemented")
 }
@@ -516,12 +592,12 @@ func (v *Evaluation) Complete(ctx context.Context) (value any, present bool, err
 // Plan reports how selections will be served.
 func (v *Evaluation) Plan() Plan { panic("unimplemented") }
 
-// Close ends the Evaluation: the input and Env are no longer borrowed, values
-// already returned are no longer shared with it, and further Select or
-// Complete calls return an error (CodeClosed); a call in flight on another
-// goroutine completes. Returned values may still alias the input and
-// Env.Bindings, as any result may, so they are the caller's to mutate only
-// when it owns those. Close is idempotent. An Evaluation that is never
+// Close ends the Evaluation: further Select or Complete calls return an
+// error (CodeClosed), and the borrow of the input and Env, and the sharing
+// of returned values with the Evaluation, end when Close returns and any
+// call then in flight completes. Returned values may still alias the input
+// and Env.Bindings, as any result may, so they are the caller's to mutate
+// only when it owns those. Close is idempotent. An Evaluation that is never
 // closed is reclaimed by the garbage collector; Close makes the release
 // prompt and the end of the borrow explicit.
 func (v *Evaluation) Close() { panic("unimplemented") }
@@ -559,8 +635,9 @@ const (
 	// ReasonUnsupportedCall: a field's subexpression calls a function the
 	// planner has not qualified as selectable.
 	ReasonUnsupportedCall
-	// ReasonArrayInput: the input is an array, so the constructor groups over
-	// it and each field's value is evaluated over the whole input.
+	// ReasonArrayInput: the input, or the view a foreign root resolves to,
+	// is an array, so the constructor groups over it and each field's value
+	// is evaluated over the whole input.
 	ReasonArrayInput
 	// ReasonPlanBudget: the expression exceeded the planner's work bound.
 	ReasonPlanBudget
@@ -572,10 +649,11 @@ func (r Reason) String() string { panic("unimplemented") }
 
 // Object is an insertion-ordered object: the type of every object the
 // expression constructs, and a valid input where key order matters. The zero
-// Object is empty and ready to use. Object is not safe for concurrent
-// mutation. Get is O(1); Delete is O(n). A key that is not valid UTF-8 is
-// stored as given and refused (CodeUnsupportedValue) when an evaluation
-// reads the object.
+// Object is empty and ready to use; a nil *Object reads as empty (Len 0, Get
+// not ok, empty Keys and All) and Set on it panics, as a nil map does.
+// Object is not safe for concurrent mutation. Get is O(1); Delete and Map
+// are O(n). A key that is not valid UTF-8 is stored as given and refused
+// (CodeUnsupportedValue) when an evaluation reads the object.
 type Object struct{ _ struct{} }
 
 // NewObject returns an empty Object with room for capacity members.
@@ -599,8 +677,8 @@ func (o *Object) Keys() iter.Seq[string] { panic("unimplemented") }
 // All iterates the members in insertion order.
 func (o *Object) All() iter.Seq2[string, any] { panic("unimplemented") }
 
-// Map returns the members as a Go map. Order is not preserved; nested
-// *Object values are not converted.
+// Map returns the members as a new Go map sharing the member values. Order
+// is not preserved; nested *Object values are not converted.
 func (o *Object) Map() map[string]any { panic("unimplemented") }
 
 // MarshalJSON encodes the object with members in insertion order, as Marshal
@@ -608,21 +686,25 @@ func (o *Object) Map() map[string]any { panic("unimplemented") }
 func (o *Object) MarshalJSON() ([]byte, error) { panic("unimplemented") }
 
 // UnmarshalJSON replaces the object's members with those of a JSON object,
-// preserving order, with values as Unmarshal decodes them. A duplicate
-// member name is an error.
+// preserving order, with values as Unmarshal decodes them and under the
+// same bounds. A duplicate member name is an error.
 func (o *Object) UnmarshalJSON(data []byte) error { panic("unimplemented") }
 
 // Resolver resolves a value whose Go type is outside the admitted set, such
 // as a protocol buffer message or an application struct, into a value the
 // engine can read. Resolve returns either an admitted value or a value
 // implementing ObjectView or ArrayView; anything else is an error
-// (CodeUnsupportedValue). An error Resolve returns is passed to the caller
-// wrapped in an *Error (CodeResolver), so errors.Is and errors.As see the
-// cause; ctx's own error is returned as ctx.Err(). The engine calls Resolve
-// once per read of a foreign value and charges each call as work and the
-// bytes it returns to MaxBytes. Members and elements a view returns may
-// themselves be foreign and are resolved when read; a carried foreign value
-// returns to the caller as the original value, not as its view.
+// (CodeUnsupportedValue). A Resolver that does not recognize v returns an
+// error; that error is passed to the caller wrapped in an *Error
+// (CodeResolver), so errors.Is and errors.As see the cause, and ctx's own
+// error is returned as ctx.Err(). The engine calls Resolve once per read of
+// a foreign value and does not memoize the result, so a Resolver whose
+// views are costly to build may memoize by identity itself; each call is
+// charged as work, and the strings and []byte the engine observes through
+// the returned view are charged to MaxBytes. Members and elements a view
+// returns may themselves be foreign and are resolved when read; a carried
+// foreign value returns to the caller as the original value, not as its
+// view.
 //
 // Resolver is the boundary of the closed environment: an expression can
 // drive it with any key, in any order, as many times as the work bound
@@ -636,7 +718,8 @@ type Resolver interface {
 }
 
 // ObjectView is an object the engine reads through the view rather than by
-// conversion. Get's ok == false is absence, not null. Range reports members
+// conversion. Get's ok == false is absence, not null, and (nil, true, nil)
+// is null; a non-nil error takes precedence over ok. Range reports members
 // in the object's order, and every order-observing operation observes that
 // order. Get and Range must agree on membership; the engine trusts both.
 type ObjectView interface {
@@ -655,12 +738,13 @@ type ArrayView interface {
 // *encoding/base64.Encoding.
 type BytesEncoding interface{ EncodeToString(src []byte) string }
 
-// Code is an error code: the language's where the documentation or the
-// reference implementation defines one for the situation (S0201, T2001,
-// D1001, D3030, ...), or an engine code. A language code is raised only in a
+// Code is an error code: the language's where the reference implementation
+// defines one for the situation (S0201, T2001, D1001, D3030, ...; the
+// documentation catalogues no codes, so the reference's table is the
+// catalogue), or an engine code. A language code is raised only in a
 // situation the language defines for it; every refusal this package adds is
-// an E code, so Class() == ClassEngine identifies behavior another member of
-// the class might not share.
+// an E code, so Class() == ClassEngine identifies a refusal another member
+// of the class might not make.
 type Code string
 
 // Class returns the code's class. Codes are classified by a table, not by
@@ -704,7 +788,8 @@ const (
 	CodeInexact          Code = "E1008" // an integer operand could not convert to float64 exactly
 )
 
-// Sentinels for errors.Is. An *Error matches the sentinel with its Code.
+// Sentinels for errors.Is. An *Error matches the sentinel with its Code; a
+// sentinel's Error() is its code and name.
 var (
 	ErrUnsupportedValue error = sentinel(CodeUnsupportedValue)
 	ErrBudget           error = sentinel(CodeBudget)
@@ -723,12 +808,13 @@ func (s sentinel) Error() string { panic("unimplemented") }
 // Error is a compilation or evaluation failure.
 //
 // Error() renders Code, Message, and Offset only. Message never includes
-// content derived from the input or the bindings; the offending value, for
-// errors the language defines as carrying one (such as $error's argument,
-// which is in Value and not in Message), is in Value only, and is charged to
-// the output and byte bounds. A logger that walks the struct will see Value.
-// Token is at most 64 characters. An unsupported-value error names the Go
-// type, never its contents.
+// content derived from the input or the bindings. The offending value, for
+// errors the language defines as carrying one, is in Value only and is
+// charged to the output and byte bounds: for $error and a failed $assert,
+// Value is the message the expression supplied, which Error() does not
+// render, so a caller who wants it logs or returns Value itself, and a
+// logger that walks the struct will see it. Token is at most 64 characters.
+// An unsupported-value error names the Go type, never its contents.
 type Error struct {
 	Code    Code
 	Message string

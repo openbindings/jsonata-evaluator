@@ -75,3 +75,14 @@ func ExampleError() {
 		}
 	}
 }
+
+// A language error carries its code, class, and position in the expression;
+// Error() never includes input content.
+func ExampleExpression_Eval_languageError() {
+	expr := jsonata.MustCompile(`"a" + 1`, nil)
+	_, _, err := expr.Eval(context.Background(), nil, nil)
+	var e *jsonata.Error
+	if errors.As(err, &e) && e.Code.Class() == jsonata.ClassType {
+		fmt.Println(e.Code, "at offset", e.Offset) // T2001
+	}
+}

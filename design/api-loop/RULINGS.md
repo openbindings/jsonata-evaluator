@@ -328,3 +328,123 @@ the idiom reviewer asked what a concurrent `Select` of the same field does
 roughly eighty lines with six marked guesses (JSON versus proto field
 names, presence, enum rendering, well-known types, map keys, element
 conversion context). Third panel asking for a shipped implementation.
+
+## Additions from the iteration-4 panel (2026-09-18)
+
+**Ruling 3, `Evaluation` concurrency: the performance engineer costs it.**
+The memo itself is cheap (an atomic state word per field, a channel only on
+contention), but "one budget across all selections" under concurrent
+`Select` makes every budget decrement an atomic add in the inner loop, or
+forces reservation windows whose failure point differs from sequential
+selection. The stub now admits the second consequence. The reviewer's
+recommendation is to drop the promise; the integrator's iteration-3 sketch
+is the one consumer that used it. Recommendation unchanged:
+single-goroutine by rule.
+
+**Ruling 7, `Close`: a second idiom reviewer argues for deletion.** The
+argument: `Close` releases nothing the collector would not, its borrow
+contract cannot be enforced, and the doc undercuts it in the next
+sentence. The counter stands: the memoized-sharing window needs a definite
+end. Recommendation unchanged: keep.
+
+**Ruling 8, the numeric model.**
+
+*8a, `$round`.* The practitioner argues for the decimal spelling with a new
+ground: the documentation's tie examples (`$round(11.5)` is `12`,
+`$round(12.5)` is `12`, verified) show half-to-even on decimal ties that are
+exactly representable, which decides nothing about inexact ties but shows
+the documentation thinks in decimal digits; and a price with a trailing 5
+is the case an invoice transform hits. The ledger row now says
+"interpretation, pending" and records the exactly-representable point.
+Recommendation unchanged: keep the binary basis and pin it at class level.
+
+*8b, refuse or round once.* Now three reviewers across two panels (pl in
+iteration 3; practitioner and idiom in iteration 4). The practitioner
+shows the asymmetry a user will hit: `ts_ns / 1e9` succeeds and `ts_ns *
+1e-9` fails for the same nanosecond timestamp, because `1e9` is integral
+and `1e-9` is a decimal; the stub now states that consequence in one line.
+The idiom reviewer adds that if refusal is a class rule (README rule 8),
+`CodeInexact` should be a class-level obligation so that a member which
+rounds silently is non-conformant rather than merely different; that is
+ruling 6 material and recorded there. Recommendation unchanged: keep
+refusal, with the stated principle (operands are never converted
+inexactly; a non-integral result of exact operands is rounded once).
+
+*8c, the 2^53 cap: removed this iteration.* The PL skeptic showed the cap
+broke substitutivity (`float64(9007199254740994) + 1` rounded to
+`...996` while the equal int64 gave `...995`, verified). Every integral
+float64 is exactly some integer and fits `MaxIntegerBits`, so the cap was
+not needed for exactness; the stub now treats any integral float64 as the
+integer it denotes, at the cost that `1e23 + 1` is the 23-digit exact
+integer and `$string(1e21)` is digits rather than `"1e+21"` (both in the
+ledger). Flagged for veto; the alternative is to keep the cap and strike
+"never of the representation" from the doc.
+
+**Ruling 9 (new): the typed exit.** Three reviewers want a supported way
+from a result into typed Go. The idiom reviewer wants a finite output
+model: `Materialize` (or a `Canonical`) that yields only `nil`, `bool`,
+`string`, `[]byte`, `int64`, `*big.Int`, `float64`, `[]any`, and `*Object`,
+on the `encoding/json` precedent of promising what `Unmarshal` into `any`
+yields, and argues carriage is a property of `Eval` while normalization is
+an opt-in second step. The integrator wants `Int64`, `Float64`, `String`,
+`Index`, and a `Decode(ctx, v, env, target)` with `json` tag semantics and
+exact int64 fields, on the ground that the alternative every team writes
+is a round trip through JSON text that re-introduces the 2^53 loss. The
+practitioner wants the type of every result shape stated. `Int64` and
+`Float64` were applied this iteration as helpers that prejudge neither
+design. Recommendation: a `Canonical(v any) any` with the idiom reviewer's
+contract, not a normalizing `Materialize` (identity return is worth
+keeping), and `Decode` deferred until an SDK consumer needs it.
+
+**Ruling 1 evidence.** The idiom reviewer counts the `map`/`*Object`
+bifurcation as the largest ergonomics tax and calls `Member` a bandage;
+the practitioner and PL skeptic say the same in different words. No new
+argument for either uniform choice.
+
+**Ruling 4, regex dialect: fifth panel.** The PL skeptic observes that the
+stub has already ruled in all but name: "Go's `${name}` form is not
+recognized" and regex compiled at `Compile` describe Go's `regexp`, and "a
+pending row is not a declaration". The integrator says this ruling matters
+more than any numeric one because the linear-time property is what makes
+untrusted regex literals safe. The idiom reviewer predicts it will be the
+first issue filed and that users will experience it as "Go's regex is
+broken", exactly as with `regexp`. Recommendation unchanged.
+
+**Ruling 5 evidence.** The integrator's protobuf Resolver runs to sixty
+lines again, with the `[]*pb.Item`-is-foreign-as-a-whole trap caught only
+on a second read. Fourth panel.
+
+**Ruling 6, the class README: new sub-items.**
+
+*6n. An authority ladder* (pl, second time): documentation text; an
+authority the documentation incorporates by reference (`JSON.stringify`,
+"regular expression", "characters"), applied over the member's value
+model; a recorded interpretation where the text admits readings; the value
+model where the documentation is silent about values; an engine refusal.
+The ledger now carries an **incorporated** class as evidence.
+
+*6o. Rule 3 is vacuous as written* (pl): "owes no more than its host offers
+and must not offer less" is contradicted by `*big.Int` promotion (more than
+Go's wraparound) and the absence of `complex128` (less). Replace with: the
+member's value model is stated, and it is built from host types without an
+intermediate tree.
+
+*6p. Rule 1 versus rule 6 are circular* (pl): membership requires passing
+the reference suite, which encodes departures from the documentation; the
+two reconcile only through the ledger, which rule 6 restricts to
+unrepresentable values.
+
+*6q. Refusal as a class obligation* (idiom): if rule 8 is a class rule,
+`CodeInexact` and the refusal on inexact conversion should be class-level,
+so that a member which rounds silently is non-conformant.
+
+*6m evidence.* The practitioner, for the fourth panel, shows the
+portable-core claim is false for `$string` of any non-integral number and
+for `$keys`/`$merge`/`$sift` with integer-like keys, and proposes the
+narrowed sentence.
+
+*Concept row.* Medians across the four panels of the loop: B, B+, B, B+.
+The PL skeptic's grade is C+ in every panel and always for the same
+reason: the README's two-tier authority story does not survive its own
+ledger. Every other lens grades the concept B- or better and says the API
+is stronger than the README that introduces it.
