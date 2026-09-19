@@ -49,7 +49,7 @@ func ExampleExpression_Prepare() {
 	expr := jsonata.MustCompile(`{ "id": user_id, "summary": $string($) }`, nil)
 	in, _ := jsonata.Unmarshal([]byte(`{"user_id": 1, "display_name": "ada"}`))
 
-	ev, err := expr.Prepare(in, nil)
+	ev, err := expr.Prepare(context.Background(), in, nil)
 	if err != nil {
 		panic(err)
 	}

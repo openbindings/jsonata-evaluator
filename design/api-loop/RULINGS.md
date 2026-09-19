@@ -205,3 +205,126 @@ Under the current README, the first is documentation-over-reference (the
 stub follows the docs), and rule 6 as written does not permit it, which is
 exactly the defect 6d fixes. Both reviewers who raised it note that
 `$string` and `&` on floats will be the first divergence any author notices.
+
+## Additions from the iteration-3 panel (2026-09-18)
+
+**Ruling 4, regex dialect: fourth panel, still blocked.** All five
+reviewers again. New arguments: the JavaScript member's author notes that
+honoring "characters are code points" forces the `u` flag, under which
+ECMAScript's own engine is stricter than the reference (`/\-/u` is a syntax
+error), so even the JavaScript member cannot be dialect-identical to the
+reference; the PL skeptic names RE2's linear-time guarantee as a security
+property a backtracking port cannot give and asks that the ruling say so;
+the practitioner writes the sentence for the third time. Recommendation
+unchanged: RE2, declared, with `CodeUnsupportedRegex` at Compile, and the
+class defining a portable subset (RE2 ∩ ECMAScript over code points).
+
+**Ruling 6, the class README: escalated.** Four of five reviewers (idiom,
+integrator, js, pl) independently reach the same finding from different
+directions: the Go doc's numeric tower, code-point strings, full case
+mapping, member order, and refusal rules are decisions no host makes, the
+Go member made them well, and the README then attributes them to "the
+host", which licenses a second member to differ in exactly the places
+OpenBindings authors stand (`$string` of a number, `$keys`, arithmetic near
+2^53, regex). The idiom reviewer's form of it: Go's `regexp` implements a
+*written* syntax specification, RE2, and ships one; the analogy argues for
+a written class value model, not against it. The JavaScript author's form:
+"without the profile I can promise a faithful ECMAScript-flavored dialect
+of the documentation, which is a second thing, not a second member."
+
+6e (the profile) is therefore escalated from "defer until a consumer" to
+"required before a second member is started." New sub-items:
+
+**6g. A precedence order over authorities** (pl): normative prose, then
+examples, then an authority the documentation incorporates by reference
+(`JSON.stringify`, XPath picture strings, regex syntax) read as specifying
+the algorithm over the abstract value with the incorporating host's value
+model replaced by the member's, then the value model, then the reference's
+behavior. Without the substitution rule, incorporating `JSON.stringify` for
+digits while rejecting its number model is unprincipled.
+
+**6h. Rewrite rule 6** (pl, practitioner, js): a divergence is a departure
+from the reference's *observable behavior*, not from the suite; three
+classes (documentation says otherwise; documentation silent and the value
+model decides; reference implements what the documentation does not
+describe); the suite is the detection floor; a member adds a fixture for a
+departure no fixture exercises and runs differential tests against the
+reference. The ledger was re-tagged with these classes this iteration as
+evidence; four of its rows violate rule 6 as written.
+
+**6i. Rule 7** (pl, js): "closed except for the clock, entropy, and a
+caller-supplied resolver that presents values, never functions." The API
+has had that door since iteration 2 and the rule denies it.
+
+**6j. Rule 9** (pl): "unobservable in success"; `Select` is not a guard,
+so selection is observable when `Complete` would fail.
+
+**6k. Member order** (js, ties to 6f and ruling 1): either the class pins
+ECMAScript's own-property order (array-index keys ascending, then
+insertion), which the documentation is written against and `$string`
+inherits through `JSON.stringify`, and `Object.Set` hoists; or the class
+declares order host-owned and OpenBindings authors are told `$keys` order
+is not portable. The JavaScript host cannot give plain insertion order
+without `Map`, which no caller holds.
+
+**6l. Class-owned tables** (js): the E codes and their classes; the
+position unit for the suite (code points; byte `Offset` a Go extra); the
+`Limits` fields and what one node and one unit of work are, or budget
+refusals are undeclarable divergences; `Now` at millisecond resolution;
+the properties a member's decoder must have if it ships one (exact
+integers, duplicate-name policy, unpaired-surrogate policy); the `Reason`
+vocabulary and the `Reads()` opacity rules, because the SDK parity rule
+makes them observable.
+
+**6m. The portable-core claim is false as written** (practitioner, third
+panel; js): `$string`, `$keys`, `$merge`, and `$sift` are in the listed
+subset and in the ledger. Narrow it ("over string, boolean, null, and
+integer values, and objects without integer-like keys") or make it the
+profile of 6e.
+
+**Ruling 8 (new): the numeric model.** The two items flagged for veto in
+iterations 2 and 3 have now been argued by three reviewers each and belong
+in the queue rather than in a changelog footnote.
+
+*8a. `$round` basis.* Current: half to even on the binary float64
+(`$round(2.675, 2)` is `2.67`). For the decimal spelling (practitioner):
+the reference does it, every user has calibrated to it, and the
+documentation's examples are decimal. For pinning either as a class
+algorithm (js): the float64 is bit-identical on every host, so this is not
+a value-model consequence and the ledger's justification was wrong; two
+binary64 members with different tie algorithms disagree on
+`$round(0.125, 2)`. The ledger row now says "interpretation".
+Recommendation: keep the binary basis (it is the value's rounding, and
+decimal-spelling rounding is a rendering artifact), and pin it at class
+level under 6e so every binary64 member matches.
+
+*8b. Refuse or round once on an inexact mixed conversion.* Current:
+`9007199254740993 + 0.5` is `CodeInexact`; `9007199254740993 / 2` is the
+exact quotient rounded once. The doc now states the principle (operands
+are never converted inexactly; a non-integral result of exact operands is
+rounded once). For round-once everywhere (pl): both cases lose the same
+information for the same reason, and `1/3` proves entering binary64 is
+definitional, not approximation; refusal should be reserved for non-finite,
+division by zero, and `MaxIntegerBits`. Recommendation: keep refusal; the
+distinction between converting an operand and rounding a result is the
+one that lets `$$.id + 0.5` fail loudly instead of corrupting the ID.
+
+*8c. The 2^53 integrality cap*, applied this iteration: an integral float64
+of magnitude at most 2^53 is an integer. Without a cap `1e300 + 1` is a
+301-digit exact integer computed from a float; with it, `1e23` stays a
+decimal. Flagged; no reviewer argued against a cap.
+
+**Ruling 1 evidence.** The JavaScript author: JS has one object type and
+its order is ECMAScript's; the `map`/`*Object` split has no mirror. If 6k
+pins ECMAScript order, `*Object` becomes the type that implements it and
+the ruling-1 argument for uniform `*Object` strengthens.
+
+**Ruling 3 evidence.** The integrator's sketch selects two fields from
+separate goroutines with `errgroup` and relies on the documented safety;
+the idiom reviewer asked what a concurrent `Select` of the same field does
+(now stated: it waits). One consumer for the current answer.
+
+**Ruling 5 evidence.** The integrator's protobuf Resolver sketch runs to
+roughly eighty lines with six marked guesses (JSON versus proto field
+names, presence, enum rendering, well-known types, map keys, element
+conversion context). Third panel asking for a shipped implementation.

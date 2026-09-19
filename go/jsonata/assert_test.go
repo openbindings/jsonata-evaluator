@@ -16,3 +16,10 @@ var (
 	_ interface{ Is(error) bool } = (*Error)(nil)
 	_                             = errors.Is
 )
+
+// The sentinels are not *Error values, so their fields cannot be mutated
+// through a type assertion, and (*Error).Unwrap exposes a Resolver's cause.
+var (
+	_ interface{ Unwrap() error } = (*Error)(nil)
+	_ error                       = sentinel("")
+)
