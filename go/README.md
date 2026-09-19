@@ -8,3 +8,6 @@ usable yet.
 
 Module path: `github.com/openbindings/jsonata-evaluator/go`, package
 `jsonata`. Releases tag by subdirectory (`go/vX.Y.Z`).
+
+Declared divergences from the reference implementation's test suite are
+recorded in [jsonata/DIVERGENCES.md](jsonata/DIVERGENCES.md).

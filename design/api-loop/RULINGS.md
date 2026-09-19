@@ -167,3 +167,41 @@ tag rules, on the ground that a Go programmer's first call will be over a
 struct. Still frozen. Note that the iteration-2 `Access` redesign (one
 `Resolve` method plus optional view interfaces) makes such an implementation
 about a third the size it would have been.
+
+## Additions from the iteration-2 panel (2026-09-18)
+
+**Ruling 4, regex dialect: the loop is blocked on this item.** Third panel
+running in which every reviewer flags the unstated dialect. This round the
+practitioner writes the sentence they want ("Go's regexp, RE2 syntax, i and
+m flags, lookaround and backreferences fail at Compile") and the PL skeptic
+proposes a portable regex subset (RE2 ∩ ECMAScript over code points) for
+the class. No reviewer in three panels has argued for leaving it unstated.
+Recommendation unchanged. The stub still says nothing; `DIVERGENCES.md`
+records it as pending.
+
+**Ruling 1, output object type, sharpened.** The idiom reviewer argues from
+the README's own text: rule 2 says host-native members evaluate over "the
+host's ordinary values," Go's ordinary object is `map[string]any`, and rule
+6 already licenses sorted enumeration as a declared divergence, so `*Object`
+is "the JavaScript value model re-imported through a library type." The
+counter (carriage by identity, decoded document order via `Unmarshal`)
+stands, and every other reviewer accepts `*Object` while disliking the
+two-arm switch. Recommendation unchanged: keep the split, documented.
+
+**Ruling 7 (new), `Close`.** Panel 1 (idiom, perf, integrator) wanted `Close`
+kept without an error return; panel 2's idiom reviewer wants it deleted
+because Go has no borrows and `regexp`/`template` hold state without one.
+The security reviewer wanted an explicit end to the borrow window. The stub
+keeps `Close()`, idempotent, defining the end of sharing. Recommendation:
+keep; the memoized-sharing window needs a definite end and `Close` is the
+only honest way to give it one.
+
+**Ruling 6a and 6d evidence, verified this round against jsonata-js 2.1.1.**
+The reference renders floats at 15 significant digits (`$string(0.1 + 0.2)`
+is `"0.3"`) where the documentation specifies `JSON.stringify`; it rounds
+`$round(2.675, 2)` to `2.68` on the decimal spelling where the documentation
+is silent; it hoists integer-like keys where the documentation is silent.
+Under the current README, the first is documentation-over-reference (the
+stub follows the docs), and rule 6 as written does not permit it, which is
+exactly the defect 6d fixes. Both reviewers who raised it note that
+`$string` and `&` on floats will be the first divergence any author notices.
