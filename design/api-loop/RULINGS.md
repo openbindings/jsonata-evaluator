@@ -5,6 +5,26 @@ side and a recommendation. The stub keeps its current answer until a ruling
 lands. A ruling still open when the loop stops becomes a GitHub issue on this
 repository.
 
+The loop stopped on 2026-09-18 (see `FINAL.md`). Every ruling below is
+filed as an issue, numbered to match:
+[#1](https://github.com/openbindings/jsonata-evaluator/issues/1) object
+type, [#2](https://github.com/openbindings/jsonata-evaluator/issues/2)
+Select path, [#3](https://github.com/openbindings/jsonata-evaluator/issues/3)
+Evaluation concurrency,
+[#4](https://github.com/openbindings/jsonata-evaluator/issues/4) regex
+dialect, [#5](https://github.com/openbindings/jsonata-evaluator/issues/5)
+Resolver implementations,
+[#6](https://github.com/openbindings/jsonata-evaluator/issues/6) the class
+README, [#7](https://github.com/openbindings/jsonata-evaluator/issues/7)
+Close, [#8](https://github.com/openbindings/jsonata-evaluator/issues/8) the
+numeric model, [#9](https://github.com/openbindings/jsonata-evaluator/issues/9)
+the typed exit,
+[#10](https://github.com/openbindings/jsonata-evaluator/issues/10) the
+decimal decode boundary,
+[#11](https://github.com/openbindings/jsonata-evaluator/issues/11) decoder
+stance, [#12](https://github.com/openbindings/jsonata-evaluator/issues/12)
+the absence triple.
+
 ## 1. Output object type
 
 **Current:** carried objects return as the caller's `map[string]any`;
